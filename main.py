@@ -47,8 +47,9 @@ def preprocess_data(responses_df):
         "Content-Type": "application/json"
     }
 
+    print(f"Pre-processing data for {len(responses_df)} participants...")
+
     for index, participant in responses_df.iterrows():
-        print(f"Processing participant {index} of {len(responses_df)}")
         alias = participant["Email"]
 
         # Use Microsoft Graph API to get manager
@@ -66,28 +67,53 @@ def preprocess_data(responses_df):
         title = response.json().get('jobTitle')
         participant["title"] = title
 
-    return responses_df
+        #print(f"Found title {title}, manager {manager} and skip manager {skip_manager} for {alias}")
+
+    print(f"Done pre-processing {len(responses_df)} participants")
+    return responses_df.to_json()
 
 # Send message to OpenAI API and return the response
 def match_with_gpt(inputdata):
+    system_message = '''
+Help pair mentees with mentors in the provided json data. Each item is either a mentor or mentee. Use the following criteria and constraints provided below:
+- Do not use mentors or mentees that aren't provided in the json data
+- Do not pair a mentor with more mentees than the mentor has capacity for.
+- Mentors and mentees should have a different manager (as specified in the "org" field).
+- Mentors should be at least one level above mentees (as specified in the "title" field). 
+- Create pairs based on common goals or interests as defined by the objectives and details properties.
+
+Provide a reason/description for why you suggested each pairing as well as a reason why the match might not be ideal.
+Provide a rating out of 10 on how close the mentor's and mentee's preferences are aligned. Include whether mentor is over their capacity.
+
+Return the mentor/mentee pairs in the following JSON structure:
+{
+  "mentor": "mentor email",
+  "mentee": mentee email,
+  "reason_for": "Reason why Mentor was paired with Mentee",
+  "reason_against":"Any reasons why this might not be a good match",
+  "alignment_score": "score out of 10",
+  "over_capacity":"True if mentor is over their capacity",
+}
+
+Let's think step by step and think carefully and logically.
+Ensuring no constraints have been ignored, especially the capacity constraint. For mentees who do not have an appropriate match, enter "No match found" in the "mentor" field.
+
+Do not include anything other than valid json in the response. Only include valid matches in the response.
+'''
     response = openai.ChatCompletion.create(
-        engine = "chat35", # use "chat" for GPT-4, "chat35" for GPT-3.5 Turbo
+        engine = "chat", # use "chat" for GPT-4, "chat35" for GPT-3.5 Turbo
         messages =
-            [{"role": "system", "content": 'You will match mentors with mentees based on their preferences ... or follow other instructions.'}, #TODO: Update system prompt
+            [{"role": "system", "content": system_message},
              {"role": "user", "content": f'{inputdata}'}],
     )
     completion = json.loads(str(response))
 
     return completion["choices"][0]["message"]["content"]
 
-# TODO: Post process the results
 def postprocess_data(matches):
-    return #TODO: Remove once implemented
-
-    # Write matches to CSV
-    matches_df = pd.DataFrame(matches)
-    matches_df.to_csv("matches.csv", index=False)
-
+    # Write matches to Excel
+    matches_df = pd.read_json(matches)
+    matches_df.to_excel("matches.xlsx", index=False)
 
 if __name__ == '__main__':
 
@@ -100,9 +126,6 @@ if __name__ == '__main__':
     inputdata = preprocess_data(responses_df)
 
     logging.info(f"Preprocess_data: {inputdata}")
-
-    # TODO: remove once we're using real data
-    inputdata = "tell me a joke"
 
     response = match_with_gpt(inputdata)
 
